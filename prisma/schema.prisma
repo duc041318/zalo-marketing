@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ============ AUTH & USERS ============
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  name          String
+  phone         String?
+  role          String   @default("user") // admin, user
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  zaloAccounts  ZaloAccount[]
+  proxies       Proxy[]
+  jobs          Job[]
+  subscription  Subscription?
+  payments      Payment[]
+  affiliate     Affiliate?
+  messageTemplates MessageTemplate[]
+  customers     Customer[]
+}
+
+// ============ ZALO ACCOUNTS ============
+
+model ZaloAccount {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  zaloId    String
+  name      String
+  phone     String?
+  cookie    String?
+  token     String?
+  proxyId   String?
+  proxy     Proxy?   @relation(fields: [proxyId], references: [id])
+  status    String   @default("inactive") // active, inactive, error
+  friends   Int      @default(0)
+  groups    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  friendsList    Friend[]
+  groupsList     ZaloGroup[]
+  jobs           Job[]
+  messages       Message[]
+  chatbotConfig  ChatbotConfig?
+
+  @@index([userId])
+}
+
+// ============ PROXY ============
+
+model Proxy {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  host     String
+  port     Int
+  type     String @default("http") // http, https, socks5
+  username String?
+  password String?
+  status   String @default("active") // active, inactive, error
+  createdAt DateTime @default(now())
+
+  zaloAccounts ZaloAccount[]
+
+  @@index([userId])
+}
+
+// ============ FRIENDS ============
+
+model Friend {
+  id            String      @id @default(cuid())
+  zaloAccountId String
+  zaloAccount   ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  friendZaloId  String
+  name          String
+  phone         String?
+  avatarUrl     String?
+  birthday      String?
+  labels        String?     // JSON array of labels
+  createdAt     DateTime    @default(now())
+
+  @@unique([zaloAccountId, friendZaloId])
+  @@index([zaloAccountId])
+}
+
+model FriendRequest {
+  id            String   @id @default(cuid())
+  zaloAccountId String
+  targetZaloId  String
+  targetName    String?
+  status        String   @default("pending") // pending, accepted, rejected
+  direction     String   @default("outgoing") // outgoing, incoming
+  createdAt     DateTime @default(now())
+
+  @@index([zaloAccountId])
+}
+
+// ============ GROUPS ============
+
+model ZaloGroup {
+  id            String      @id @default(cuid())
+  zaloAccountId String
+  zaloAccount   ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  groupZaloId   String
+  name          String
+  memberCount   Int         @default(0)
+  link          String?
+  category      String?
+  createdAt     DateTime    @default(now())
+
+  @@unique([zaloAccountId, groupZaloId])
+  @@index([zaloAccountId])
+}
+
+// ============ MESSAGES ============
+
+model Message {
+  id            String      @id @default(cuid())
+  userId        String
+  zaloAccountId String
+  zaloAccount   ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  type          String      // friends, groups, file, phone, label, birthday
+  content       String
+  recipients    String?     // JSON array
+  attachments   String?     // JSON array of file URLs
+  status        String      @default("pending") // pending, sending, sent, failed
+  scheduledAt   DateTime?
+  sentAt        DateTime?
+  successCount  Int         @default(0)
+  failCount     Int         @default(0)
+  createdAt     DateTime    @default(now())
+
+  @@index([userId])
+  @@index([zaloAccountId])
+}
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  content   String
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ============ JOBS ============
+
+model Job {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  zaloAccountId String?
+  zaloAccount   ZaloAccount? @relation(fields: [zaloAccountId], references: [id])
+  type          String      // send_message, add_friend, join_group, scan_members, etc.
+  status        String      @default("pending") // pending, running, completed, failed, cancelled
+  progress      Int         @default(0)
+  total         Int         @default(0)
+  result        String?     // JSON result
+  error         String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============ SUBSCRIPTION & BILLING ============
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan      String   @default("trial") // trial, starter, pro, business
+  maxAccounts Int    @default(1)
+  maxDevices  Int    @default(1)
+  maxJobs     Int    @default(1)
+  startDate DateTime @default(now())
+  endDate   DateTime
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  method    String   // bank_transfer, momo, vnpay, license_key
+  plan      String
+  duration  String   // 1_month, 3_months, 6_months, 1_year
+  status    String   @default("pending") // pending, completed, failed, refunded
+  reference String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ============ AFFILIATE ============
+
+model Affiliate {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referralCode String   @unique
+  commission   Int      @default(0) // total earned in VND
+  withdrawn    Int      @default(0)
+  clickCount   Int      @default(0)
+  signupCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  referrals    AffiliateReferral[]
+}
+
+model AffiliateReferral {
+  id          String    @id @default(cuid())
+  affiliateId String
+  affiliate   Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referredEmail String
+  commission  Int       @default(0)
+  status      String    @default("pending") // pending, paid
+  createdAt   DateTime  @default(now())
+
+  @@index([affiliateId])
+}
+
+// ============ AI CHATBOT ============
+
+model ChatbotConfig {
+  id            String      @id @default(cuid())
+  zaloAccountId String      @unique
+  zaloAccount   ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  isActive      Boolean     @default(false)
+  prompt        String?     // System prompt for AI
+  model         String      @default("claude") // claude, openai
+  maxTokens     Int         @default(500)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+// ============ CRM ============
+
+model Customer {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  zaloId    String?
+  category  String   @default("cold") // hot, warm, cold
+  labels    String?  // JSON array
+  notes     String?
+  lastContact DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
