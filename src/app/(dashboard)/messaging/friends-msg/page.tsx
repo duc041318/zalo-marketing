@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,18 +15,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MessageComposer } from "@/components/features/message-composer";
-import { Search, Users, Send, UserCheck } from "lucide-react";
+import { Search, Users, Send, UserCheck, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
 
-const sampleFriends = [
-  { id: "1", name: "Nguyễn Văn A", phone: "0901234567", label: "Khách hàng" },
-  { id: "2", name: "Trần Thị B", phone: "0912345678", label: "Đối tác" },
-  { id: "3", name: "Lê Văn C", phone: "0923456789", label: "Bạn bè" },
-  { id: "4", name: "Phạm Thị D", phone: "0934567890", label: "Khách hàng" },
-  { id: "5", name: "Hoàng Văn E", phone: "0945678901", label: "Tiềm năng" },
-  { id: "6", name: "Vũ Thị F", phone: "0956789012", label: "Đối tác" },
-  { id: "7", name: "Đặng Văn G", phone: "0967890123", label: "Bạn bè" },
-  { id: "8", name: "Bùi Thị H", phone: "0978901234", label: "Khách hàng" },
-];
+interface Friend {
+  id: string;
+  name: string;
+  phone: string;
+  label: string;
+}
+
+interface ZaloAccount {
+  id: string;
+  name: string;
+  phone: string;
+}
 
 const labels = ["Tất cả", "Khách hàng", "Đối tác", "Bạn bè", "Tiềm năng"];
 
@@ -35,15 +38,62 @@ export default function FriendsMsgPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filterLabel, setFilterLabel] = useState("Tất cả");
+  const [accounts, setAccounts] = useState<ZaloAccount[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [totalFriends, setTotalFriends] = useState(0);
+  const [sentToday, setSentToday] = useState(0);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [loadingFriends, setLoadingFriends] = useState(false);
+  const [sending, setSending] = useState(false);
 
+  // Load Zalo accounts
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        setLoadingAccounts(true);
+        const data = await api.get("/api/zalo-accounts");
+        setAccounts(data.accounts || []);
+      } catch {
+        // silently fail
+      } finally {
+        setLoadingAccounts(false);
+      }
+    };
+    loadAccounts();
+  }, []);
+
+  // Load friends when account changes
+  const fetchFriends = useCallback(async () => {
+    if (!selectedAccount) {
+      setFriends([]);
+      setTotalFriends(0);
+      return;
+    }
+    try {
+      setLoadingFriends(true);
+      const data = await api.get(`/api/friends?accountId=${selectedAccount}`);
+      setFriends(data.friends || []);
+      setTotalFriends(data.total || 0);
+    } catch {
+      setFriends([]);
+    } finally {
+      setLoadingFriends(false);
+    }
+  }, [selectedAccount]);
+
+  useEffect(() => {
+    fetchFriends();
+  }, [fetchFriends]);
+
+  // Client-side filtering
   const filteredFriends = useMemo(() => {
-    return sampleFriends.filter((f) => {
+    return friends.filter((f) => {
       const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         f.phone.includes(searchQuery);
       const matchesLabel = filterLabel === "Tất cả" || f.label === filterLabel;
       return matchesSearch && matchesLabel;
     });
-  }, [searchQuery, filterLabel]);
+  }, [friends, searchQuery, filterLabel]);
 
   const allSelected = filteredFriends.length > 0 && filteredFriends.every((f) => selectedIds.includes(f.id));
 
@@ -62,6 +112,30 @@ export default function FriendsMsgPage() {
     );
   };
 
+  const handleSendMessage = async (data: { content: string; scheduled: boolean; scheduleTime: string }) => {
+    if (selectedIds.length === 0) {
+      alert("Vui lòng chọn ít nhất một bạn bè");
+      return;
+    }
+    try {
+      setSending(true);
+      await api.post("/api/messages", {
+        accountId: selectedAccount,
+        recipientIds: selectedIds,
+        content: data.content,
+        scheduled: data.scheduled,
+        scheduleTime: data.scheduleTime,
+      });
+      setSentToday((prev) => prev + selectedIds.length);
+      setSelectedIds([]);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Không thể gửi tin nhắn";
+      alert(message);
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -75,7 +149,7 @@ export default function FriendsMsgPage() {
           <CardContent className="flex items-center gap-3 py-4">
             <Users className="h-8 w-8 text-blue-500" />
             <div>
-              <p className="text-2xl font-bold">1,000</p>
+              <p className="text-2xl font-bold">{totalFriends.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">Tổng bạn bè</p>
             </div>
           </CardContent>
@@ -93,7 +167,7 @@ export default function FriendsMsgPage() {
           <CardContent className="flex items-center gap-3 py-4">
             <Send className="h-8 w-8 text-orange-500" />
             <div>
-              <p className="text-2xl font-bold">50</p>
+              <p className="text-2xl font-bold">{sentToday}</p>
               <p className="text-xs text-muted-foreground">Đã gửi hôm nay</p>
             </div>
           </CardContent>
@@ -110,16 +184,25 @@ export default function FriendsMsgPage() {
             {/* Account selector */}
             <div className="space-y-2">
               <Label>Tài khoản Zalo</Label>
-              <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v ?? "")}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Chọn tài khoản Zalo..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="acc1">Zalo - 0901234567</SelectItem>
-                  <SelectItem value="acc2">Zalo - 0912345678</SelectItem>
-                  <SelectItem value="acc3">Zalo - 0923456789</SelectItem>
-                </SelectContent>
-              </Select>
+              {loadingAccounts ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Đang tải tài khoản...
+                </div>
+              ) : (
+                <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v ?? "")}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Chọn tài khoản Zalo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((acc) => (
+                      <SelectItem key={acc.id} value={acc.id}>
+                        Zalo - {acc.phone} ({acc.name})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             {/* Search */}
@@ -162,36 +245,63 @@ export default function FriendsMsgPage() {
             </div>
 
             {/* Friends list */}
-            <div className="max-h-[400px] space-y-2 overflow-y-auto">
-              {filteredFriends.map((friend) => (
-                <div
-                  key={friend.id}
-                  className="flex items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 cursor-pointer"
-                  onClick={() => toggleFriend(friend.id)}
-                >
-                  <Checkbox
-                    checked={selectedIds.includes(friend.id)}
-                    onCheckedChange={() => toggleFriend(friend.id)}
-                  />
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
-                    {friend.name.charAt(0)}
+            {loadingFriends ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : !selectedAccount ? (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Users className="h-8 w-8 mb-2" />
+                <p className="text-sm">Chọn tài khoản Zalo để xem bạn bè</p>
+              </div>
+            ) : filteredFriends.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Users className="h-8 w-8 mb-2" />
+                <p className="text-sm">Không tìm thấy bạn bè nào</p>
+              </div>
+            ) : (
+              <div className="max-h-[400px] space-y-2 overflow-y-auto">
+                {filteredFriends.map((friend) => (
+                  <div
+                    key={friend.id}
+                    className="flex items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 cursor-pointer"
+                    onClick={() => toggleFriend(friend.id)}
+                  >
+                    <Checkbox
+                      checked={selectedIds.includes(friend.id)}
+                      onCheckedChange={() => toggleFriend(friend.id)}
+                    />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
+                      {friend.name.charAt(0)}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{friend.name}</p>
+                      <p className="text-xs text-muted-foreground">{friend.phone}</p>
+                    </div>
+                    <Badge variant="secondary" className="text-xs">
+                      {friend.label}
+                    </Badge>
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{friend.name}</p>
-                    <p className="text-xs text-muted-foreground">{friend.phone}</p>
-                  </div>
-                  <Badge variant="secondary" className="text-xs">
-                    {friend.label}
-                  </Badge>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         {/* Message composer */}
-        <MessageComposer />
+        <MessageComposer onSend={handleSendMessage} />
       </div>
+
+      {sending && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
+          <Card className="p-6">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              <p>Đang gửi tin nhắn...</p>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

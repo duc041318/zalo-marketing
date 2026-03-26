@@ -1,28 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Inbox, Check, X, Clock, UserCheck, UserX } from "lucide-react";
+import { Send, Inbox, Check, X, Clock, UserCheck, UserX, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
 
-const sentRequests = [
-  { id: 1, name: "Nguyễn Văn Minh", phone: "0901xxx234", date: "20/03/2026", status: "accepted" },
-  { id: 2, name: "Trần Thị Lan", phone: "0912xxx567", date: "19/03/2026", status: "pending" },
-  { id: 3, name: "Lê Hoàng Nam", phone: "0987xxx890", date: "18/03/2026", status: "declined" },
-  { id: 4, name: "Phạm Thu Hà", phone: "0934xxx123", date: "17/03/2026", status: "pending" },
-  { id: 5, name: "Đỗ Văn Tuấn", phone: "0978xxx456", date: "16/03/2026", status: "accepted" },
-  { id: 6, name: "Hoàng Thị Yến", phone: "0945xxx789", date: "15/03/2026", status: "pending" },
-];
+interface FriendRequest {
+  id: number;
+  name: string;
+  phone?: string;
+  date: string;
+  status: string;
+}
 
-const receivedRequests = [
-  { id: 1, name: "Vũ Đình Khoa", date: "21/03/2026" },
-  { id: 2, name: "Ngô Thị Hương", date: "20/03/2026" },
-  { id: 3, name: "Bùi Minh Đức", date: "19/03/2026" },
-  { id: 4, name: "Lý Thị Ngọc", date: "18/03/2026" },
-];
+interface RequestStats {
+  sent: number;
+  accepted: number;
+  declined: number;
+  pending: number;
+}
+
+interface ZaloAccount {
+  id: string;
+  name: string;
+  phone: string;
+}
 
 function getInitials(name: string) {
   const parts = name.split(" ");
@@ -46,29 +59,90 @@ function getStatusBadge(status: string) {
 }
 
 export default function FriendRequestsPage() {
-  const [receivedStates, setReceivedStates] = useState<Record<number, "accepted" | "declined" | null>>(
-    () => {
-      const initial: Record<number, null> = {};
-      receivedRequests.forEach((r) => {
-        initial[r.id] = null;
-      });
-      return initial;
+  const [accounts, setAccounts] = useState<ZaloAccount[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState("all");
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
+  const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([]);
+  const [stats, setStats] = useState<RequestStats>({ sent: 0, accepted: 0, declined: 0, pending: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+
+  // Load accounts
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const data = await api.get("/api/zalo-accounts");
+        setAccounts(data.accounts || []);
+      } catch {
+        // silently fail
+      }
+    };
+    loadAccounts();
+  }, []);
+
+  // Load requests
+  const fetchRequests = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const params = new URLSearchParams();
+      if (selectedAccount !== "all") params.set("accountId", selectedAccount);
+
+      const [sentData, receivedData] = await Promise.all([
+        api.get(`/api/friends/requests?${params.toString()}&direction=outgoing`),
+        api.get(`/api/friends/requests?${params.toString()}&direction=incoming`),
+      ]);
+
+      setSentRequests(sentData.requests || []);
+      setReceivedRequests(receivedData.requests || []);
+      setStats(sentData.stats || receivedData.stats || { sent: 0, accepted: 0, declined: 0, pending: 0 });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Không thể tải lời mời kết bạn";
+      setError(message);
+    } finally {
+      setLoading(false);
     }
-  );
+  }, [selectedAccount]);
 
-  const handleAccept = (id: number) => {
-    setReceivedStates((prev) => ({ ...prev, [id]: "accepted" }));
-  };
+  useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
 
-  const handleDecline = (id: number) => {
-    setReceivedStates((prev) => ({ ...prev, [id]: "declined" }));
+  const handleAction = async (requestId: number, action: "accept" | "decline" | "cancel") => {
+    const key = `${requestId}-${action}`;
+    try {
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      await api.put("/api/friends/requests", { requestId, action });
+      fetchRequests();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      alert(message);
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [key]: false }));
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Lời mời kết bạn</h1>
-        <p className="text-muted-foreground">Theo dõi lời mời đã gửi và nhận</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Lời mời kết bạn</h1>
+          <p className="text-muted-foreground">Theo dõi lời mời đã gửi và nhận</p>
+        </div>
+        <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v)}>
+          <SelectTrigger className="w-[250px]">
+            <SelectValue placeholder="Chọn tài khoản" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tất cả tài khoản</SelectItem>
+            {accounts.map((acc) => (
+              <SelectItem key={acc.id} value={acc.id}>
+                {acc.phone} - {acc.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Stats Grid */}
@@ -81,7 +155,7 @@ export default function FriendRequestsPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Đã gửi</p>
-                <p className="text-2xl font-bold">45</p>
+                <p className="text-2xl font-bold">{stats.sent}</p>
               </div>
             </div>
           </CardContent>
@@ -94,7 +168,7 @@ export default function FriendRequestsPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Chấp nhận</p>
-                <p className="text-2xl font-bold">30</p>
+                <p className="text-2xl font-bold">{stats.accepted}</p>
               </div>
             </div>
           </CardContent>
@@ -107,7 +181,7 @@ export default function FriendRequestsPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Từ chối</p>
-                <p className="text-2xl font-bold">5</p>
+                <p className="text-2xl font-bold">{stats.declined}</p>
               </div>
             </div>
           </CardContent>
@@ -120,101 +194,147 @@ export default function FriendRequestsPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Chờ phản hồi</p>
-                <p className="text-2xl font-bold">10</p>
+                <p className="text-2xl font-bold">{stats.pending}</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="sent" className="w-full">
-        <TabsList>
-          <TabsTrigger value="sent">
-            <Send className="h-4 w-4 mr-2" />
-            Đã gửi
-          </TabsTrigger>
-          <TabsTrigger value="received">
-            <Inbox className="h-4 w-4 mr-2" />
-            Đã nhận
-          </TabsTrigger>
-        </TabsList>
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <p className="text-destructive">{error}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={fetchRequests}>
+            Thử lại
+          </Button>
+        </div>
+      ) : (
+        /* Tabs */
+        <Tabs defaultValue="sent" className="w-full">
+          <TabsList>
+            <TabsTrigger value="sent">
+              <Send className="h-4 w-4 mr-2" />
+              Đã gửi ({sentRequests.length})
+            </TabsTrigger>
+            <TabsTrigger value="received">
+              <Inbox className="h-4 w-4 mr-2" />
+              Đã nhận ({receivedRequests.length})
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Tab: Đã gửi */}
-        <TabsContent value="sent" className="space-y-3 mt-4">
-          {sentRequests.map((item) => (
-            <Card key={item.id}>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-4">
-                  <Avatar>
-                    <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{item.name}</p>
-                    <p className="text-sm text-muted-foreground">{item.phone}</p>
-                  </div>
-                  <div className="text-sm text-muted-foreground hidden sm:block">
-                    {item.date}
-                  </div>
-                  <div>{getStatusBadge(item.status)}</div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={item.status !== "pending"}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Hủy lời mời
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </TabsContent>
-
-        {/* Tab: Đã nhận */}
-        <TabsContent value="received" className="space-y-3 mt-4">
-          {receivedRequests.map((item) => {
-            const state = receivedStates[item.id];
-            return (
-              <Card key={item.id}>
-                <CardContent className="py-4">
-                  <div className="flex items-center gap-4">
-                    <Avatar>
-                      <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{item.name}</p>
-                      <p className="text-sm text-muted-foreground">{item.date}</p>
-                    </div>
-                    {state === "accepted" ? (
-                      <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-                        <UserCheck className="h-3 w-3 mr-1" />
-                        Đã chấp nhận
-                      </Badge>
-                    ) : state === "declined" ? (
-                      <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
-                        <UserX className="h-3 w-3 mr-1" />
-                        Đã từ chối
-                      </Badge>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={() => handleAccept(item.id)}>
-                          <Check className="h-4 w-4 mr-1" />
-                          Đồng ý
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDecline(item.id)}>
-                          <X className="h-4 w-4 mr-1" />
-                          Từ chối
-                        </Button>
+          {/* Tab: Đã gửi */}
+          <TabsContent value="sent" className="space-y-3 mt-4">
+            {sentRequests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Send className="h-10 w-10 mb-2" />
+                <p>Chưa có lời mời nào được gửi</p>
+              </div>
+            ) : (
+              sentRequests.map((item) => (
+                <Card key={item.id}>
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-4">
+                      <Avatar>
+                        <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{item.name}</p>
+                        <p className="text-sm text-muted-foreground">{item.phone}</p>
                       </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </TabsContent>
-      </Tabs>
+                      <div className="text-sm text-muted-foreground hidden sm:block">
+                        {item.date}
+                      </div>
+                      <div>{getStatusBadge(item.status)}</div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={item.status !== "pending" || actionLoading[`${item.id}-cancel`]}
+                        onClick={() => handleAction(item.id, "cancel")}
+                      >
+                        {actionLoading[`${item.id}-cancel`] ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <X className="h-4 w-4 mr-1" />
+                        )}
+                        Hủy lời mời
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+
+          {/* Tab: Đã nhận */}
+          <TabsContent value="received" className="space-y-3 mt-4">
+            {receivedRequests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Inbox className="h-10 w-10 mb-2" />
+                <p>Chưa có lời mời nào được nhận</p>
+              </div>
+            ) : (
+              receivedRequests.map((item) => (
+                <Card key={item.id}>
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-4">
+                      <Avatar>
+                        <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{item.name}</p>
+                        <p className="text-sm text-muted-foreground">{item.date}</p>
+                      </div>
+                      {item.status === "accepted" ? (
+                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                          <UserCheck className="h-3 w-3 mr-1" />
+                          Đã chấp nhận
+                        </Badge>
+                      ) : item.status === "declined" ? (
+                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
+                          <UserX className="h-3 w-3 mr-1" />
+                          Đã từ chối
+                        </Badge>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            disabled={actionLoading[`${item.id}-accept`]}
+                            onClick={() => handleAction(item.id, "accept")}
+                          >
+                            {actionLoading[`${item.id}-accept`] ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                              <Check className="h-4 w-4 mr-1" />
+                            )}
+                            Đồng ý
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={actionLoading[`${item.id}-decline`]}
+                            onClick={() => handleAction(item.id, "decline")}
+                          >
+                            {actionLoading[`${item.id}-decline`] ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                              <X className="h-4 w-4 mr-1" />
+                            )}
+                            Từ chối
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }

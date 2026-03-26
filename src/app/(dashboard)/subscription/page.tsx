@@ -3,10 +3,39 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Monitor, Smartphone, Clock, Zap, Tag } from "lucide-react";
-import { useState } from "react";
+import { Check, Monitor, Smartphone, Clock, Zap, Tag, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { api } from "@/lib/api";
 
-const plans = [
+interface Plan {
+  name: string;
+  prices: Record<string, number>;
+  discount?: Record<string, number>;
+  originalPrice?: Record<string, number>;
+  popular?: boolean;
+  features: string[];
+}
+
+interface Subscription {
+  planName: string;
+  accountLimit: string;
+  deviceLimit: string;
+  expiresAt: string;
+  status: string;
+}
+
+interface SubscriptionStats {
+  devices: string;
+  devicesSub: string;
+  accounts: string;
+  accountsSub: string;
+  runningJobs: string;
+  runningJobsSub: string;
+  jobLimit: string;
+  jobLimitSub: string;
+}
+
+const defaultPlans: Plan[] = [
   {
     name: "STARTER",
     prices: { "1 tháng": 150000, "6 tháng": 750000, "1 năm": 1200000 },
@@ -44,12 +73,12 @@ const plans = [
   },
 ];
 
-const stats = [
-  { label: "Thiết bị", value: "1", sub: "Thiết bị đang hoạt động", icon: Monitor },
-  { label: "Tài khoản Zalo", value: "1", sub: "Tài khoản đang hoạt động", icon: Smartphone },
-  { label: "Job đang chạy", value: "0/1", sub: "Có thể tạo job mới", icon: Clock },
-  { label: "Giới hạn Job", value: "1", sub: "Có thể tạo mới", icon: Zap },
-];
+const iconMap: Record<string, typeof Monitor> = {
+  "Thiết bị": Monitor,
+  "Tài khoản Zalo": Smartphone,
+  "Job đang chạy": Clock,
+  "Giới hạn Job": Zap,
+};
 
 export default function SubscriptionPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<Record<string, string>>({
@@ -57,6 +86,83 @@ export default function SubscriptionPage() {
     PRO: "3 tháng",
     BUSINESS: "1 năm",
   });
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [stats, setStats] = useState<SubscriptionStats | null>(null);
+  const [plans, setPlans] = useState<Plan[]>(defaultPlans);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [upgrading, setUpgrading] = useState("");
+
+  useEffect(() => {
+    const fetchSubscription = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const data = await api.get("/api/subscription");
+        if (data.subscription) setSubscription(data.subscription);
+        if (data.stats) setStats(data.stats);
+        if (data.plans) setPlans(data.plans);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Không thể tải thông tin gói đăng ký";
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSubscription();
+  }, []);
+
+  const handleUpgrade = async (planName: string) => {
+    try {
+      setUpgrading(planName);
+      await api.post("/api/subscription", {
+        plan: planName,
+        period: selectedPeriod[planName],
+      });
+      // Refresh subscription data
+      const data = await api.get("/api/subscription");
+      if (data.subscription) setSubscription(data.subscription);
+      if (data.stats) setStats(data.stats);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Không thể nâng cấp gói";
+      alert(message);
+    } finally {
+      setUpgrading("");
+    }
+  };
+
+  const statItems = stats
+    ? [
+        { label: "Thiết bị", value: stats.devices, sub: stats.devicesSub },
+        { label: "Tài khoản Zalo", value: stats.accounts, sub: stats.accountsSub },
+        { label: "Job đang chạy", value: stats.runningJobs, sub: stats.runningJobsSub },
+        { label: "Giới hạn Job", value: stats.jobLimit, sub: stats.jobLimitSub },
+      ]
+    : [
+        { label: "Thiết bị", value: "-", sub: "Đang tải..." },
+        { label: "Tài khoản Zalo", value: "-", sub: "Đang tải..." },
+        { label: "Job đang chạy", value: "-", sub: "Đang tải..." },
+        { label: "Giới hạn Job", value: "-", sub: "Đang tải..." },
+      ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
+        <p className="text-destructive">{error}</p>
+        <Button variant="outline" size="sm" className="mt-2" onClick={() => window.location.reload()}>
+          Thử lại
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -84,17 +190,17 @@ export default function SubscriptionPage() {
                 <h3 className="font-semibold">Gói hiện tại</h3>
               </div>
               <div className="space-y-0.5 text-sm text-muted-foreground">
-                <p>Gói: <span className="font-medium text-foreground">Dùng thử</span></p>
-                <p>Giới hạn tài khoản: <span className="font-medium text-foreground">1/1</span></p>
-                <p>Giới hạn thiết bị: <span className="font-medium text-foreground">1/1</span></p>
+                <p>Gói: <span className="font-medium text-foreground">{subscription?.planName || "Dùng thử"}</span></p>
+                <p>Giới hạn tài khoản: <span className="font-medium text-foreground">{subscription?.accountLimit || "1/1"}</span></p>
+                <p>Giới hạn thiết bị: <span className="font-medium text-foreground">{subscription?.deviceLimit || "1/1"}</span></p>
                 <p>
                   Hết hạn:{" "}
-                  <span className="font-medium text-destructive">23/03/2026</span>
+                  <span className="font-medium text-destructive">{subscription?.expiresAt || "N/A"}</span>
                 </p>
               </div>
             </div>
             <Badge variant="outline" className="border-orange-300 text-orange-600">
-              Dùng thử
+              {subscription?.status || "Dùng thử"}
             </Badge>
           </div>
         </CardContent>
@@ -102,22 +208,25 @@ export default function SubscriptionPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="py-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {stat.label}
-                  </p>
-                  <p className="text-2xl font-bold mt-1">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{stat.sub}</p>
+        {statItems.map((stat) => {
+          const IconComp = iconMap[stat.label] || Monitor;
+          return (
+            <Card key={stat.label}>
+              <CardContent className="py-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {stat.label}
+                    </p>
+                    <p className="text-2xl font-bold mt-1">{stat.value}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{stat.sub}</p>
+                  </div>
+                  <IconComp className="h-5 w-5 text-muted-foreground" />
                 </div>
-                <stat.icon className="h-5 w-5 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {/* Plans */}
@@ -193,7 +302,13 @@ export default function SubscriptionPage() {
                   </li>
                 ))}
               </ul>
-              <Button className="w-full mt-6" variant={plan.popular ? "default" : "outline"}>
+              <Button
+                className="w-full mt-6"
+                variant={plan.popular ? "default" : "outline"}
+                disabled={upgrading === plan.name}
+                onClick={() => handleUpgrade(plan.name)}
+              >
+                {upgrading === plan.name && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Chọn gói {plan.name}
               </Button>
             </CardContent>

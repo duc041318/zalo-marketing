@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,9 @@ import {
   Users,
   UserCheck,
   UserX,
+  Loader2,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 type Label = "Khách hàng" | "Đối tác" | "VIP" | "Tiềm năng" | "Bạn bè";
 
@@ -36,6 +38,12 @@ interface Friend {
   avatarColor: string;
 }
 
+interface ZaloAccount {
+  id: string;
+  name: string;
+  phone: string;
+}
+
 const labelColors: Record<Label, string> = {
   "Khách hàng": "bg-blue-100 text-blue-800",
   "Đối tác": "bg-green-100 text-green-800",
@@ -46,30 +54,54 @@ const labelColors: Record<Label, string> = {
 
 const filters = ["Tất cả", "Khách hàng", "Đối tác", "Bạn bè", "Tiềm năng", "VIP"] as const;
 
-const sampleFriends: Friend[] = [
-  { id: 1, name: "Nguyễn Thị Mai", phone: "0912 345 678", label: "Khách hàng", date: "15/01/2026", avatarColor: "bg-pink-500" },
-  { id: 2, name: "Trần Văn Hùng", phone: "0987 654 321", label: "Đối tác", date: "22/02/2026", avatarColor: "bg-blue-500" },
-  { id: 3, name: "Lê Hoàng Nam", phone: "0903 112 233", label: "VIP", date: "03/03/2026", avatarColor: "bg-yellow-500" },
-  { id: 4, name: "Phạm Thị Lan", phone: "0938 445 667", label: "Tiềm năng", date: "10/12/2025", avatarColor: "bg-purple-500" },
-  { id: 5, name: "Hoàng Minh Tuấn", phone: "0976 889 001", label: "Bạn bè", date: "28/11/2025", avatarColor: "bg-gray-500" },
-  { id: 6, name: "Đỗ Thị Hồng", phone: "0911 223 344", label: "Khách hàng", date: "05/01/2026", avatarColor: "bg-red-500" },
-  { id: 7, name: "Vũ Đức Anh", phone: "0945 667 889", label: "VIP", date: "18/03/2026", avatarColor: "bg-green-500" },
-  { id: 8, name: "Bùi Thanh Thảo", phone: "0966 778 990", label: "Đối tác", date: "12/02/2026", avatarColor: "bg-indigo-500" },
-];
-
 export default function FriendsManagePage() {
   const [activeFilter, setActiveFilter] = useState<string>("Tất cả");
   const [selectedFriends, setSelectedFriends] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [accounts, setAccounts] = useState<ZaloAccount[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState("all");
+  const [labeling, setLabeling] = useState(false);
 
-  const filteredFriends = sampleFriends.filter((friend) => {
-    const matchesFilter = activeFilter === "Tất cả" || friend.label === activeFilter;
-    const matchesSearch =
-      searchQuery === "" ||
-      friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      friend.phone.includes(searchQuery);
-    return matchesFilter && matchesSearch;
-  });
+  // Load Zalo accounts
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const data = await api.get("/api/zalo-accounts");
+        setAccounts(data.accounts || []);
+      } catch {
+        // silently fail, accounts dropdown will be empty
+      }
+    };
+    loadAccounts();
+  }, []);
+
+  // Load friends when account/search/filter changes
+  const fetchFriends = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const params = new URLSearchParams();
+      if (selectedAccount !== "all") params.set("accountId", selectedAccount);
+      if (searchQuery) params.set("search", searchQuery);
+      if (activeFilter !== "Tất cả") params.set("label", activeFilter);
+      const data = await api.get(`/api/friends?${params.toString()}`);
+      setFriends(data.friends || []);
+      setTotal(data.total || 0);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Không thể tải danh sách bạn bè";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedAccount, searchQuery, activeFilter]);
+
+  useEffect(() => {
+    fetchFriends();
+  }, [fetchFriends]);
 
   const toggleSelect = (id: number) => {
     setSelectedFriends((prev) => {
@@ -84,10 +116,28 @@ export default function FriendsManagePage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedFriends.size === filteredFriends.length) {
+    if (selectedFriends.size === friends.length) {
       setSelectedFriends(new Set());
     } else {
-      setSelectedFriends(new Set(filteredFriends.map((f) => f.id)));
+      setSelectedFriends(new Set(friends.map((f) => f.id)));
+    }
+  };
+
+  const handleBulkLabel = async (label: string) => {
+    if (selectedFriends.size === 0) return;
+    try {
+      setLabeling(true);
+      await api.put("/api/friends/labels", {
+        friendIds: Array.from(selectedFriends),
+        label,
+      });
+      setSelectedFriends(new Set());
+      fetchFriends();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Không thể gắn nhãn";
+      alert(message);
+    } finally {
+      setLabeling(false);
     }
   };
 
@@ -97,6 +147,10 @@ export default function FriendsManagePage() {
       ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
       : name.slice(0, 2).toUpperCase();
   };
+
+  // Compute stats from data
+  const labeledCount = friends.filter((f) => f.label).length;
+  const unlabeledCount = friends.filter((f) => !f.label).length;
 
   return (
     <div className="space-y-6">
@@ -116,7 +170,7 @@ export default function FriendsManagePage() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">1,248</div>
+            <div className="text-2xl font-bold">{total.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
@@ -125,7 +179,7 @@ export default function FriendsManagePage() {
             <UserCheck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">456</div>
+            <div className="text-2xl font-bold">{labeledCount}</div>
           </CardContent>
         </Card>
         <Card>
@@ -134,7 +188,7 @@ export default function FriendsManagePage() {
             <UserX className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">792</div>
+            <div className="text-2xl font-bold">{unlabeledCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -150,14 +204,17 @@ export default function FriendsManagePage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <Select defaultValue="all">
+        <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v)}>
           <SelectTrigger className="w-full sm:w-[280px]">
             <SelectValue placeholder="Chọn tài khoản" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Tất cả tài khoản</SelectItem>
-            <SelectItem value="acc1">0912xxx456 - Nguyễn Văn A</SelectItem>
-            <SelectItem value="acc2">0987xxx321 - Trần Thị B</SelectItem>
+            {accounts.map((acc) => (
+              <SelectItem key={acc.id} value={acc.id}>
+                {acc.phone} - {acc.name}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -182,8 +239,17 @@ export default function FriendsManagePage() {
           <span className="text-sm font-medium">
             Đã chọn {selectedFriends.size}
           </span>
-          <Button variant="outline" size="sm">
-            <Tag className="h-4 w-4 mr-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={labeling}
+            onClick={() => handleBulkLabel("Khách hàng")}
+          >
+            {labeling ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Tag className="h-4 w-4 mr-1" />
+            )}
             Gắn nhãn
           </Button>
           <Button variant="destructive" size="sm">
@@ -200,70 +266,87 @@ export default function FriendsManagePage() {
       {/* Friends Table */}
       <Card>
         <CardContent className="p-0">
-          {/* Table Header */}
-          <div className="grid grid-cols-[40px_1fr_120px_120px_50px] items-center gap-4 px-4 py-3 border-b bg-muted/50 text-sm font-medium text-muted-foreground">
-            <div className="flex items-center justify-center">
-              <Checkbox
-                checked={
-                  filteredFriends.length > 0 &&
-                  selectedFriends.size === filteredFriends.length
-                }
-                onCheckedChange={toggleSelectAll}
-                aria-label="Chọn tất cả"
-              />
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-            <div>Bạn bè</div>
-            <div>Nhãn</div>
-            <div>Ngày kết bạn</div>
-            <div>Hành động</div>
-          </div>
-
-          {/* Table Rows */}
-          {filteredFriends.map((friend) => (
-            <div
-              key={friend.id}
-              className="grid grid-cols-[40px_1fr_120px_120px_50px] items-center gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-muted/30 transition-colors"
-            >
-              <div className="flex items-center justify-center">
-                <Checkbox
-                  checked={selectedFriends.has(friend.id)}
-                  onCheckedChange={() => toggleSelect(friend.id)}
-                  aria-label={`Chọn ${friend.name}`}
-                />
-              </div>
-              <div className="flex items-center gap-3 min-w-0">
-                <Avatar className="h-9 w-9 shrink-0">
-                  <AvatarFallback className={`${friend.avatarColor} text-white text-xs`}>
-                    {getInitials(friend.name)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{friend.name}</div>
-                  <div className="text-sm text-muted-foreground">{friend.phone}</div>
-                </div>
-              </div>
-              <div>
-                <Badge
-                  variant="secondary"
-                  className={labelColors[friend.label]}
-                >
-                  {friend.label}
-                </Badge>
-              </div>
-              <div className="text-sm text-muted-foreground">{friend.date}</div>
-              <div>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-
-          {filteredFriends.length === 0 && (
+          ) : error ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Users className="h-10 w-10 mb-2" />
-              <p>Không tìm thấy bạn bè nào</p>
+              <p className="text-destructive">{error}</p>
+              <Button variant="outline" size="sm" className="mt-2" onClick={fetchFriends}>
+                Thử lại
+              </Button>
             </div>
+          ) : (
+            <>
+              {/* Table Header */}
+              <div className="grid grid-cols-[40px_1fr_120px_120px_50px] items-center gap-4 px-4 py-3 border-b bg-muted/50 text-sm font-medium text-muted-foreground">
+                <div className="flex items-center justify-center">
+                  <Checkbox
+                    checked={
+                      friends.length > 0 &&
+                      selectedFriends.size === friends.length
+                    }
+                    onCheckedChange={toggleSelectAll}
+                    aria-label="Chọn tất cả"
+                  />
+                </div>
+                <div>Bạn bè</div>
+                <div>Nhãn</div>
+                <div>Ngày kết bạn</div>
+                <div>Hành động</div>
+              </div>
+
+              {/* Table Rows */}
+              {friends.map((friend) => (
+                <div
+                  key={friend.id}
+                  className="grid grid-cols-[40px_1fr_120px_120px_50px] items-center gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center justify-center">
+                    <Checkbox
+                      checked={selectedFriends.has(friend.id)}
+                      onCheckedChange={() => toggleSelect(friend.id)}
+                      aria-label={`Chọn ${friend.name}`}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="h-9 w-9 shrink-0">
+                      <AvatarFallback className={`${friend.avatarColor || "bg-primary"} text-white text-xs`}>
+                        {getInitials(friend.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{friend.name}</div>
+                      <div className="text-sm text-muted-foreground">{friend.phone}</div>
+                    </div>
+                  </div>
+                  <div>
+                    {friend.label && (
+                      <Badge
+                        variant="secondary"
+                        className={labelColors[friend.label] || ""}
+                      >
+                        {friend.label}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-sm text-muted-foreground">{friend.date}</div>
+                  <div>
+                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+              {friends.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Users className="h-10 w-10 mb-2" />
+                  <p>Không tìm thấy bạn bè nào</p>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -271,7 +354,7 @@ export default function FriendsManagePage() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Hiển thị 1-8 trên 1,248 bạn bè
+          Hiển thị 1-{friends.length} trên {total.toLocaleString()} bạn bè
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled>
